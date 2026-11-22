@@ -9,18 +9,29 @@ if not exist "%CAMPUS_WIFI_LOGIN_SOURCE%" (
     goto failed
 )
 
+echo M. China Mobile ^(CMCC-EDU^)
+echo U. China Unicom ^(Unicom^)
+"%SystemRoot%\System32\choice.exe" /C MU /M "Choose your campus Wi-Fi"
+if errorlevel 3 goto failed
+if not errorlevel 1 goto canceled
+if errorlevel 2 (
+    set "campusSsid=Unicom"
+) else (
+    set "campusSsid=CMCC-EDU"
+)
+
 "%wifiPowerShell%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "$ErrorActionPreference = 'Stop'; $source = $env:CAMPUS_WIFI_LOGIN_SOURCE; $destination = $env:CAMPUS_WIFI_LOGIN_DESTINATION; $downloaded = Get-Item -LiteralPath $source -Stream Zone.Identifier -ErrorAction SilentlyContinue; if ($downloaded) { $answer = Read-Host 'Trust this downloaded script and install it? [y/N]'; if ($answer -ne 'y') { exit 2 } }; if ($source -ne $destination) { New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null; Copy-Item -LiteralPath $source -Destination $destination -Force }; if ($downloaded) { Unblock-File -LiteralPath $destination }"
 if errorlevel 2 goto canceled
 if errorlevel 1 goto failed
 
-"%wifiPowerShell%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "%CAMPUS_WIFI_LOGIN_DESTINATION%" -Mode Setup -Ssid "CMCC-EDU"
+"%wifiPowerShell%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "%CAMPUS_WIFI_LOGIN_DESTINATION%" -Mode Setup -Ssid "%campusSsid%"
 if errorlevel 1 goto failed
 
 "%wifiPowerShell%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "%CAMPUS_WIFI_LOGIN_DESTINATION%" -Mode Install
 if errorlevel 1 goto failed
 
 echo.
-echo Setup complete. Trying to connect to CMCC-EDU now...
+echo Setup complete. Trying to connect to %campusSsid% now...
 "%wifiPowerShell%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "%CAMPUS_WIFI_LOGIN_DESTINATION%" -Mode Run
 if errorlevel 1 goto failed
 echo.

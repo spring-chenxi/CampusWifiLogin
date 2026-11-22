@@ -15,6 +15,9 @@ $probeUri = [uri]'http://www.msftconnecttest.com/connecttest.txt'
 $redirectUri = [uri]'http://www.msftconnecttest.com/redirect'
 $alternateProbeUri = [uri]'http://www.msftncsi.com/ncsi.txt'
 $mobileHost = 'wlan.jsyd139.com'
+$unicomHost = '58.240.51.118'
+$unicomSsid = 'Unicom'
+$unicomProvince = 'wlan.js.chinaunicom.cn'
 $dataDir = Join-Path $env:LOCALAPPDATA 'CampusWifiLogin'
 $configPath = Join-Path $dataDir 'profile.xml'
 $attemptPath = Join-Path $dataDir 'last-attempt.txt'
@@ -76,13 +79,13 @@ function Read-Page($Client, [uri]$Uri) {
     }
 }
 
-function Test-MobileUri([uri]$Uri) {
+function Test-PortalUri([uri]$Uri, [string]$PortalHost) {
     return ($null -ne $Uri -and $Uri.IsAbsoluteUri -and
-        $Uri.IdnHost -eq $mobileHost -and $Uri.Scheme -in 'http', 'https' -and
+        $Uri.IdnHost -eq $PortalHost -and $Uri.Scheme -in 'http', 'https' -and
         $Uri.IsDefaultPort -and -not $Uri.UserInfo)
 }
 
-function Get-Connectivity($Client) {
+function Get-Connectivity($Client, [string]$PortalHost = $mobileHost) {
     $probes = @(
         @{ Uri = $probeUri; Expected = 'Microsoft Connect Test' }
         @{ Uri = $redirectUri; Expected = $null }
@@ -101,7 +104,7 @@ function Get-Connectivity($Client) {
             continue
         }
         $receivedResponse = $true
-        if (Test-MobileUri $page.Location) {
+        if (Test-PortalUri $page.Location $PortalHost) {
             return [pscustomobject]@{ Online = $false; Portal = $page.Location }
         }
         if (-not $portal) { $portal = $page.Location }
@@ -116,10 +119,10 @@ function Get-Connectivity($Client) {
     [pscustomobject]@{ Online = $false; Portal = $portal }
 }
 
-function Read-MobilePage($Client, [uri]$Uri, [bool]$RequireTls = $false) {
+function Read-PortalPage($Client, [uri]$Uri, [string]$PortalHost, [string]$Provider, [bool]$RequireTls = $false) {
     for ($hop = 0; $hop -lt 4; $hop++) {
-        if (-not (Test-MobileUri $Uri) -or ($RequireTls -and $Uri.Scheme -ne 'https')) {
-            throw 'Unexpected Jiangsu Mobile portal destination.'
+        if (-not (Test-PortalUri $Uri $PortalHost) -or ($RequireTls -and $Uri.Scheme -ne 'https')) {
+            throw "Unexpected $Provider portal destination."
         }
         $RequireTls = ($Uri.Scheme -eq 'https')
         $page = Read-Page $Client $Uri
@@ -127,7 +130,7 @@ function Read-MobilePage($Client, [uri]$Uri, [bool]$RequireTls = $false) {
         if (-not $page.Location) { break }
         $Uri = $page.Location
     }
-    throw 'Jiangsu Mobile login page is unavailable.'
+    throw "$Provider login page is unavailable."
 }
 
 function Read-HtmlAttributes([string]$Tag) {
@@ -165,20 +168,82 @@ function Read-MobileForm([string]$Html) {
     return ,$fields
 }
 
-function Get-PortalLogin($Client, [uri]$Portal) {
-    # Provider-specific form handling is confined to this function and its Mobile helpers.
-    if (-not (Test-MobileUri $Portal)) { return $null }
+function Read-UnicomForm($Page) {
+    $pattern = '(?is)<form\b(?<opening>[^>]*)>(?<body>.*?)</form\s*>'
+    foreach ($form in [regex]::Matches($Page.Body, $pattern)) {
+        $attributes = Read-HtmlAttributes $form.Groups['opening'].Value
+        if ($attributes['method'] -and $attributes['method'] -ne 'post') { continue }
+        if ($attributes['action']) {
+            $action = [uri]::new($Page.Uri, $attributes['action'])
+            if (-not (Test-PortalUri $action $unicomHost) -or $action.Scheme -ne $Page.Uri.Scheme -or
+                $action.AbsolutePath -cne '/authServlet' -or $action.Query -or $action.Fragment) { continue }
+        }
 
-    $page = Read-MobilePage $Client $Portal
-    $frame = Find-MobileFrame $page.Body $page.Uri
-    if ($frame) {
-        $page = Read-MobilePage $Client $frame ($page.Uri.Scheme -eq 'https')
+        $fields = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $inputs = @{}
+        foreach ($inputTag in [regex]::Matches($form.Groups['body'].Value, '(?is)<input\b[^>]+>')) {
+            $inputAttributes = Read-HtmlAttributes $inputTag.Value
+            $name = $inputAttributes['name']
+            if (-not $name -or $inputTag.Value -match '\sdisabled(?:\s|=|>)') { continue }
+            $inputs[$name] = $inputAttributes['type']
+            if ($inputAttributes['type'] -eq 'hidden' -and $name -notin 'UserName', 'PassWord') {
+                $fields[$name] = [string]$inputAttributes['value']
+            }
+        }
+        if (-not $inputs.ContainsKey('UserName') -or $inputs['PassWord'] -ne 'password') { continue }
+        foreach ($name in $inputs.Keys) {
+            if ($inputs[$name] -ne 'hidden' -and $name -match 'captcha|verify.?code|validat(e|ion).?code|check.?code|rand.?code|vcode') {
+                throw 'Jiangsu Unicom login needs manual verification.'
+            }
+        }
+        if (-not $fields.ContainsKey('paramStr') -or [string]::IsNullOrWhiteSpace($fields['paramStr'])) { continue }
+        if ($fields.ContainsKey('province') -and $fields['province'] -and $fields['province'] -ne $unicomProvince) { continue }
+        $fields['province'] = $unicomProvince
+        return ,$fields
+    }
+    throw 'Unrecognized Jiangsu Unicom login form.'
+}
+
+function Get-UnicomLogin($Client, [uri]$Portal) {
+    $provider = 'Jiangsu Unicom'
+    $page = Read-PortalPage $Client $Portal $unicomHost $provider
+    foreach ($frameTag in [regex]::Matches($page.Body, '(?is)<i?frame\b[^>]+>')) {
+        $attributes = Read-HtmlAttributes $frameTag.Value
+        if (-not $attributes['src']) { continue }
+        $frame = [uri]::new($page.Uri, $attributes['src'])
+        if ((Test-PortalUri $frame $unicomHost) -and $frame.AbsolutePath -ceq '/style/school/index.jsp') {
+            $page = Read-PortalPage $Client $frame $unicomHost $provider ($page.Uri.Scheme -eq 'https')
+            break
+        }
     }
     [pscustomobject]@{
-        Provider = 'Jiangsu Mobile'
+        Provider = $provider
         Action = [uri]::new($page.Uri, '/authServlet')
         Referer = $page.Uri
-        Fields = (Read-MobileForm $page.Body)
+        Fields = (Read-UnicomForm $page)
+        UserField = 'UserName'
+        PasswordField = 'PassWord'
+    }
+}
+
+function Get-PortalLogin($Client, [uri]$Portal, [string]$PortalHost = $mobileHost) {
+    if (-not (Test-PortalUri $Portal $PortalHost)) { return $null }
+    if ($PortalHost -eq $unicomHost) { return (Get-UnicomLogin $Client $Portal) }
+
+    $provider = 'Jiangsu Mobile'
+    $page = Read-PortalPage $Client $Portal $mobileHost $provider
+    $frame = Find-MobileFrame $page.Body $page.Uri
+    if ($frame) {
+        $page = Read-PortalPage $Client $frame $mobileHost $provider ($page.Uri.Scheme -eq 'https')
+    }
+    $fields = Read-MobileForm $page.Body
+    $fields['isCookie'] = 'false'
+    $fields['cookieType'] = '-1'
+    [pscustomobject]@{
+        Provider = $provider
+        Action = [uri]::new($page.Uri, '/authServlet')
+        Referer = $page.Uri
+        Fields = $fields
         UserField = 'UserName'
         PasswordField = 'PassWord'
     }
@@ -188,11 +253,12 @@ function Send-PortalLogin($Client, $Login, [pscredential]$Credential) {
     $fields = $Login.Fields
     $fields[$Login.UserField] = $Credential.UserName
     $fields[$Login.PasswordField] = $Credential.GetNetworkCredential().Password
-    $fields['isCookie'] = 'false'
-    $fields['cookieType'] = '-1'
     $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $Login.Action)
     try {
         $request.Headers.Referrer = $Login.Referer
+        if ($Login.Provider -eq 'Jiangsu Unicom') {
+            $request.Headers.Add('Origin', $Login.Referer.GetLeftPart([UriPartial]::Authority))
+        }
         $request.Content = [System.Net.Http.FormUrlEncodedContent]::new($fields)
         $fields.Remove($Login.PasswordField) | Out-Null
         $fields.Remove($Login.UserField) | Out-Null
@@ -213,7 +279,9 @@ function Save-Profile {
     $profileName = $WifiProfile
     if (-not $profileName) { $profileName = $network }
     if ($profileName -match '[\x00-\x1f"]') { throw 'Invalid Windows Wi-Fi profile name.' }
-    Write-Host 'Use your Jiangsu Mobile Wi-Fi service credentials. This portal may transmit them over HTTP.'
+    $provider = 'Jiangsu Mobile'
+    if ($network -ceq $unicomSsid) { $provider = 'Jiangsu Unicom' }
+    Write-Host "Use your $provider Wi-Fi service credentials. This portal may transmit them over HTTP."
     $account = Read-Host 'Mobile phone number'
     if ($account -notmatch '^\d{11}$') { throw 'Enter an 11-digit mobile phone number.' }
     $password = Read-Host 'Wi-Fi service password' -AsSecureString
@@ -245,6 +313,8 @@ function Invoke-WifiLogin($Config, [bool]$CheckOnly) {
         Write-Status "Target Wi-Fi unavailable ($wifi). Connect manually once so Windows saves its profile."
         return
     }
+    $portalHost = $mobileHost
+    if ($Config.Ssid -ceq $unicomSsid) { $portalHost = $unicomHost }
     $handler = [System.Net.Http.HttpClientHandler]::new()
     $handler.UseProxy = $false
     $handler.AllowAutoRedirect = $false
@@ -256,7 +326,7 @@ function Invoke-WifiLogin($Config, [bool]$CheckOnly) {
         $state = $null
         $probeFailure = $null
         for ($attempt = 0; $attempt -lt 3; $attempt++) {
-            try { $state = Get-Connectivity $client } catch {
+            try { $state = Get-Connectivity $client $portalHost } catch {
                 $probeFailure = $_.Exception.GetBaseException()
             }
             if ($state -and ($state.Online -or $state.Portal)) { break }
@@ -276,7 +346,7 @@ function Invoke-WifiLogin($Config, [bool]$CheckOnly) {
             Write-Status 'No portal redirect found. Open the Windows Wi-Fi sign-in page manually.'
             return
         }
-        $login = Get-PortalLogin $client $state.Portal
+        $login = Get-PortalLogin $client $state.Portal $portalHost
         if (-not $login) {
             Write-Status ('No matching provider for portal host {0}. Credentials were not sent.' -f $state.Portal.IdnHost)
             return
@@ -300,7 +370,7 @@ function Invoke-WifiLogin($Config, [bool]$CheckOnly) {
         foreach ($delay in 2, 4, 6) {
             Start-Sleep -Seconds $delay
             $online = $false
-            try { $online = (Get-Connectivity $client).Online } catch { }
+            try { $online = (Get-Connectivity $client $portalHost).Online } catch { }
             if ($online) {
                 Write-Status 'Login succeeded. Internet connectivity verified.'
                 return
@@ -373,6 +443,10 @@ try {
             'Unexpected Jiangsu Mobile portal destination.',
             'Jiangsu Mobile login page is unavailable.',
             'Unrecognized Jiangsu Mobile login form.',
+            'Unexpected Jiangsu Unicom portal destination.',
+            'Jiangsu Unicom login page is unavailable.',
+            'Unrecognized Jiangsu Unicom login form.',
+            'Jiangsu Unicom login needs manual verification.',
             'Run -Mode Setup first.'
         )
         if ($reason -notin $known) { $reason = "Operation failed ($($_.Exception.GetType().Name))." }

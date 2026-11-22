@@ -5,16 +5,17 @@
 | 运营商 | 当前状态 |
 | --- | --- |
 | 江苏移动 | 支持 `wlan.jsyd139.com` 认证入口，已在南航天目湖校区的 `CMCC-EDU` 上验证。 |
-| 中国联通 | 等待真实认证页。 |
+| 江苏联通 | `Unicom`。已根据天目湖校区的登录请求适配，已通过模拟测试，待验证实际联网。 |
 | 中国电信 | 等待真实认证页。 |
 
 ## 双击安装
 
-1. 首次使用时，在 Windows 的网络列表里连接一次 `CMCC-EDU`，让 Windows 保存该网络。
-2. 在 GitHub 仓库页面点击 **Code → Download ZIP**，解压整个压缩包，双击 **`Install.cmd`**。如果安装器提示确认脚本来源，确认文件来自你信任的仓库后输入 `Y`。
-3. 在弹出的窗口里输入江苏移动校园宽带的手机号和密码。输入密码时会显示星号。安装器会保存配置、注册开机登录，并尝试联网一次。
+1. 首次使用时，在 Windows 的网络列表连接一次自己的校园 Wi‑Fi。江苏移动选 `CMCC-EDU`，江苏联通选 `Unicom`。
+2. 在 GitHub 仓库页面点击 **Code → Download ZIP**，解压整个压缩包，双击 **`Install.cmd`**。
+3. 在安装器里按 **M** 选择移动，或按 **U** 选择联通。如果窗口提示确认脚本来源，确认文件来自你信任的仓库后输入 `Y`。
+4. 输入对应校园宽带的手机号和密码。输入密码时会显示星号。安装器会保存配置、注册开机登录，并尝试联网一次。
 
-安装成功后，每次进入 Windows，脚本会自动尝试连接并认证 `CMCC-EDU`。安装器把脚本放在当前用户的 `%LOCALAPPDATA%\CampusWifiLogin` 中，解压目录可以移走。双击安装默认适用于 `CMCC-EDU`，其他 Wi‑Fi 名称可按下面的步骤配置。
+安装成功后，每次进入 Windows，脚本会尝试连接并认证你选的校园 Wi‑Fi。安装器把脚本放在当前用户的 `%LOCALAPPDATA%\CampusWifiLogin` 中，解压目录可以移走。每个 Windows 用户保留一份配置，重新安装时以新选择的网络和账号为准。
 
 ## 手动配置或排查
 
@@ -26,7 +27,7 @@ Unblock-File -LiteralPath .\CampusWifiLogin.ps1
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\CampusWifiLogin.ps1 -Mode Check -Ssid '你的WiFi名称'
 ```
 
-3. 如果显示识别到江苏移动认证表单，就运行 `Setup`，在本机窗口录入手机号和校园宽带密码。随后用 `Run` 测试，看到 `Login succeeded` 表示脚本提交后检测到了互联网连接。
+3. 如果显示 `login form detected`，就运行 `Setup`，在本机窗口录入手机号和校园宽带密码。随后用 `Run` 测试，看到 `Login succeeded` 表示脚本提交后检测到了互联网连接。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\CampusWifiLogin.ps1 -Mode Setup
@@ -48,7 +49,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\CampusWifiLogin.
 
 配置和最后一次运行状态写在 `$env:LOCALAPPDATA\CampusWifiLogin`。密码由 Windows 加密后保存在本机。手机号在本机配置中可读，发布 GitHub 时只提交源文件和说明。
 
-江苏移动当前适配的是 `wlan.jsyd139.com`。如果认证站点使用 HTTP，密码在网络上传输时没有 TLS 加密。脚本会检查认证域名，并且不会跟随登录请求返回的跳转。
+江苏移动的认证地址是 `wlan.jsyd139.com`，江苏联通的认证地址是 `58.240.51.118`。如果认证站点使用 HTTP，密码在网络上传输时没有 TLS 加密。脚本按 Wi‑Fi 配置校验认证地址，并且不会跟随登录请求返回的跳转。遇到需要验证码的联通登录页，请在浏览器中完成认证。
 
 ## 扩展运营商
 
