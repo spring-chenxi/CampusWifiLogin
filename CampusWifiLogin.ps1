@@ -170,13 +170,22 @@ function Read-MobileForm([string]$Html) {
 
 function Read-UnicomForm($Page) {
     $pattern = '(?is)<form\b(?<opening>[^>]*)>(?<body>.*?)</form\s*>'
-    foreach ($form in [regex]::Matches($Page.Body, $pattern)) {
+    $forms = [regex]::Matches($Page.Body, $pattern)
+    $issues = [System.Collections.Generic.List[string]]::new()
+    foreach ($form in $forms) {
         $attributes = Read-HtmlAttributes $form.Groups['opening'].Value
-        if ($attributes['method'] -and $attributes['method'] -ne 'post') { continue }
+        if ($attributes['method'] -and $attributes['method'] -ne 'post') {
+            $issues.Add('method-not-post')
+            continue
+        }
         if ($attributes['action']) {
-            $action = [uri]::new($Page.Uri, $attributes['action'])
-            if (-not (Test-PortalUri $action $unicomHost) -or $action.Scheme -ne $Page.Uri.Scheme -or
-                $action.AbsolutePath -cne '/authServlet' -or $action.Query -or $action.Fragment) { continue }
+            $action = $null
+            if (-not [uri]::TryCreate($Page.Uri, $attributes['action'], [ref]$action) -or
+                -not (Test-PortalUri $action $unicomHost) -or $action.Scheme -ne $Page.Uri.Scheme -or
+                $action.AbsolutePath -cne '/authServlet' -or $action.Query -or $action.Fragment) {
+                $issues.Add('action-mismatch')
+                continue
+            }
         }
 
         $fields = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -190,18 +199,42 @@ function Read-UnicomForm($Page) {
                 $fields[$name] = [string]$inputAttributes['value']
             }
         }
-        if (-not $inputs.ContainsKey('UserName') -or $inputs['PassWord'] -ne 'password') { continue }
+        if (-not $inputs.ContainsKey('UserName') -or $inputs['PassWord'] -ne 'password') {
+            if (-not $inputs.ContainsKey('UserName')) { $issues.Add('username-input-missing') }
+            if (-not $inputs.ContainsKey('PassWord')) { $issues.Add('password-input-missing') }
+            elseif ($inputs['PassWord'] -ne 'password') { $issues.Add('password-type-mismatch') }
+            continue
+        }
         foreach ($name in $inputs.Keys) {
             if ($inputs[$name] -ne 'hidden' -and $name -match 'captcha|verify.?code|validat(e|ion).?code|check.?code|rand.?code|vcode') {
                 throw 'Jiangsu Unicom login needs manual verification.'
             }
         }
-        if (-not $fields.ContainsKey('paramStr') -or [string]::IsNullOrWhiteSpace($fields['paramStr'])) { continue }
-        if ($fields.ContainsKey('province') -and $fields['province'] -and $fields['province'] -ne $unicomProvince) { continue }
+        if (-not $fields.ContainsKey('paramStr')) {
+            $issues.Add('hidden-param-missing')
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($fields['paramStr'])) {
+            $issues.Add('hidden-param-empty')
+            continue
+        }
+        if ($fields.ContainsKey('province') -and $fields['province'] -and $fields['province'] -ne $unicomProvince) {
+            $issues.Add('province-mismatch')
+            continue
+        }
         $fields['province'] = $unicomProvince
         return ,$fields
     }
-    throw 'Unrecognized Jiangsu Unicom login form.'
+    # Print only fixed labels. The page URL, input values and session data stay out of logs.
+    $pageKind = switch -CaseSensitive ($Page.Uri.AbsolutePath) {
+        '/' { 'entry' }
+        '/style/school/index.jsp' { 'index' }
+        '/style/school/logon.jsp' { 'logon' }
+        default { 'other' }
+    }
+    if ($forms.Count -eq 0) { $issues.Add('no-form') }
+    $detail = ($issues | Select-Object -Unique) -join ','
+    throw ('Unrecognized Jiangsu Unicom login form. Page={0} Forms={1} Reason={2}' -f $pageKind, $forms.Count, $detail)
 }
 
 function Get-UnicomLogin($Client, [uri]$Portal) {
@@ -449,7 +482,9 @@ try {
             'Jiangsu Unicom login needs manual verification.',
             'Run -Mode Setup first.'
         )
-        if ($reason -notin $known) { $reason = "Operation failed ($($_.Exception.GetType().Name))." }
+        if ($reason -notin $known -and $reason -notmatch '^Unrecognized Jiangsu Unicom login form\. Page=(entry|index|logon|other) Forms=\d+ Reason=[a-z,-]+$') {
+            $reason = "Operation failed ($($_.Exception.GetType().Name))."
+        }
         Write-Status $reason
     } else {
         Write-Error $_.Exception.Message -ErrorAction Continue
