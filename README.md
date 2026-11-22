@@ -4,11 +4,19 @@
 
 | 运营商 | 当前状态 |
 | --- | --- |
-| 江苏移动 | 已实现 `wlan.jsyd139.com` 入口。模拟测试已覆盖认证表单，南航天目湖现场待验证。 |
+| 江苏移动 | 支持 `wlan.jsyd139.com` 认证入口，已在南航天目湖校区的 `CMCC-EDU` 上验证。 |
 | 中国联通 | 等待真实认证页。 |
 | 中国电信 | 等待真实认证页。 |
 
-## 先手动试一次
+## 双击安装
+
+1. 首次使用时，在 Windows 的网络列表里连接一次 `CMCC-EDU`，让 Windows 保存该网络。
+2. 在 GitHub 仓库页面点击 **Code → Download ZIP**，解压整个压缩包，双击 **`Install.cmd`**。如果安装器提示确认脚本来源，确认文件来自你信任的仓库后输入 `Y`。
+3. 在弹出的窗口里输入江苏移动校园宽带的手机号和密码。输入密码时会显示星号。安装器会保存配置、注册开机登录，并尝试联网一次。
+
+安装成功后，每次进入 Windows，脚本会自动尝试连接并认证 `CMCC-EDU`。安装器把脚本放在当前用户的 `%LOCALAPPDATA%\CampusWifiLogin` 中，解压目录可以移走。双击安装默认适用于 `CMCC-EDU`，其他 Wi‑Fi 名称可按下面的步骤配置。
+
+## 手动配置或排查
 
 1. 把 `CampusWifiLogin.ps1` 放在固定文件夹。Windows 里先连接一次校园 Wi‑Fi，让电脑保存该网络。
 2. 在该文件夹打开 PowerShell。确认信任脚本后，运行以下命令。把 `你的WiFi名称` 改成 Windows 列表里的实际名称。`Check` 仅检查当前连接和认证页，适合在已连 Wi‑Fi、尚未认证时运行。
@@ -34,11 +42,11 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\CampusWifiLogin.
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\CampusWifiLogin.ps1 -Mode Uninstall
 ```
 
-`Install` 注册当前用户的计划任务，下次进入 Windows 时触发。卸载计划任务后，本机录入的数据仍保留。移动脚本到其他文件夹后，可重新运行 `Install` 更新路径。
+`Install` 注册当前用户的计划任务，下次进入 Windows 时触发。通过 `Install.cmd` 安装后，也可以对 `$env:LOCALAPPDATA\CampusWifiLogin\CampusWifiLogin.ps1` 执行 `-Mode Uninstall` 来关闭开机运行。关闭后，本机录入的数据仍保留。手动安装时，移动脚本后可重新运行 `Install` 更新路径。
 
 ## 凭据和诊断
 
-配置和最后一次运行状态写在 `$env:LOCALAPPDATA\CampusWifiLogin`。密码由 Windows 加密后保存在本机。手机号在本机配置中可读，发布 GitHub 时只提交脚本和这份说明。
+配置和最后一次运行状态写在 `$env:LOCALAPPDATA\CampusWifiLogin`。密码由 Windows 加密后保存在本机。手机号在本机配置中可读，发布 GitHub 时只提交源文件和说明。
 
 江苏移动当前适配的是 `wlan.jsyd139.com`。如果认证站点使用 HTTP，密码在网络上传输时没有 TLS 加密。脚本会检查认证域名，并且不会跟随登录请求返回的跳转。
 
