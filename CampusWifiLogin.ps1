@@ -169,11 +169,18 @@ function Read-MobileForm([string]$Html) {
 }
 
 function Read-UnicomForm($Page) {
-    $pattern = '(?is)<form\b(?<opening>[^>]*)>(?<body>.*?)</form\s*>'
-    $forms = [regex]::Matches($Page.Body, $pattern)
+    $markup = [regex]::Replace($Page.Body, '(?is)<!--.*?-->|<script\b[^>]*>.*?</script\s*>', '')
+    $pattern = '(?is)<form\b(?<opening>[^>]*)>(?<body>.*?)(?:(?<closing></form\s*>)|(?=<form\b|</body\s*>|\z))'
+    $forms = [regex]::Matches($markup, $pattern)
     $issues = [System.Collections.Generic.List[string]]::new()
     foreach ($form in $forms) {
         $attributes = Read-HtmlAttributes $form.Groups['opening'].Value
+        if (-not $form.Groups['closing'].Success -and
+            ($Page.Uri.AbsolutePath -cne '/style/school/index.jsp' -or
+            $attributes['id'] -cne 'form1' -or $attributes['name'] -cne 'form1' -or $attributes['method'] -ne 'post')) {
+            $issues.Add('unclosed-form')
+            continue
+        }
         if ($attributes['method'] -and $attributes['method'] -ne 'post') {
             $issues.Add('method-not-post')
             continue
